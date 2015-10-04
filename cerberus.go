@@ -235,7 +235,7 @@ type userDB struct {
 }
 
 // Session collection entry struct.
-type sessionsBD struct {
+type sessionsDB struct {
 	Username string
 	Token    []byte
 }
@@ -283,7 +283,7 @@ func (d *SessionDataStore) insertUser(username, userpass, email string, isAdmin 
 // Insert token into "sessions" collection.
 func (d *SessionDataStore) insertToken(token []byte, username string) error {
 	col := d.db.C("sessions")
-	if _, err := col.Upsert(bson.M{"username": username}, &sessionsBD{username, token}); err != nil {
+	if _, err := col.Upsert(bson.M{"username": username}, &sessionsDB{username, token}); err != nil {
 		log.Println(err)
 		return err
 	}
@@ -318,14 +318,14 @@ func (d *SessionDataStore) getUser(username string) (userDB, error) {
 
 // Search an entry in "sessions" where "username" is passed username to sessions
 // and returns collection and returns a sessionDB struct or error.
-func (d *SessionDataStore) getToken(username string) (sessionsBD, error) {
-	result := sessionsBD{}
+func (d *SessionDataStore) getToken(username string) (sessionsDB, error) {
+	result := sessionsDB{}
 	col := d.db.C("sessions")
 	query := bson.M{"username": username}
 
 	if err := col.Find(query).One(&result); err != nil {
 		log.Printf("Cerberus: %s", err)
-		return sessionsBD{}, err
+		return sessionsDB{}, err
 	}
 
 	return result, nil
