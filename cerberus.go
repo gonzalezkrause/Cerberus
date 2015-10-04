@@ -1,3 +1,10 @@
+// Copyright (C) 2015 José F. González Krause.
+// All rights reserved.
+// Use of this source code is governed by a GPLv2-style
+// license that can be found in the LICENSE file.
+// You can contact me under:
+// email: rev(ninja [dot] hackercat [at] josef)
+
 package cerberus
 
 import (
@@ -11,16 +18,33 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
-// Fucking global…
-var SessionDatabase SessionDataStore
+var sessionDatabase sessionDataStore
 
 type Cerberus struct {
-	StoreName string
+	storeName string
 }
 
-func NewCerberus(storeName string) *Cerberus {
+func NewCerberus(storeName, dbAddr, dbPort, dbName string) *Cerberus {
+	sessionDatabase = sessionDataStore{
+		dbAddr: dbAddr,
+		dbPort: dbPort,
+		dbName: dbName,
+	}
+
+	session, err := mgo.Dial(sessionDatabase.dbAddr + ":" + sessionDatabase.dbPort)
+	if err != nil {
+		log.Fatalf("Cerberus: %s", err.Error())
+	}
+
+	session.SetMode(mgo.Monotonic, true)
+
+	db := session.DB(dbName)
+	sessionDatabase.db = db
+
+	log.Println("Cerberus: Session database conected")
+
 	return &Cerberus{
-		StoreName: storeName,
+		storeName: storeName,
 	}
 }
 
@@ -29,30 +53,29 @@ func NewCerberus(storeName string) *Cerberus {
 // ====================
 
 // Generate a new tampersafe cookie store
-// var store = sessions.NewCookieStore(securecookie.GenerateRandomKey(64))
+var store = sessions.NewCookieStore(securecookie.GenerateRandomKey(64))
 
 // FIXME: Dev bypass
-var store = sessions.NewCookieStore([]byte{
-	107, 136, 183, 114, 81, 237, 136, 14,
-	208, 189, 211, 56, 11, 164, 77, 121,
-	192, 188, 252, 57, 88, 89, 57, 111,
-	227, 239, 35, 228, 142, 247, 155, 181,
-	154, 175, 8, 133, 178, 88, 86, 12,
-	189, 153, 53, 101, 110, 248, 196, 250,
-	6, 243, 60, 237, 73, 112, 214, 113,
-	139, 186, 107, 121, 35, 248, 19, 64,
-})
+// var store = sessions.NewCookieStore([]byte{
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// 	42, 42, 42, 42, 42, 42, 42, 42,
+// })
 
-// Sets the session cookie and stores the session entry to the "sessions" collection
+// SetSession cookie and stores the session entry into the "sessions" collection
 func (c *Cerberus) SetSession(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, c.StoreName)
+	session, err := store.Get(r, c.storeName)
 	if err != nil {
-		// http.Error(w, MessingArroundError.Error(), http.StatusInternalServerError)
 		c.UnsetSession(w, r)
 		return
 	}
 
-	// TODO: Configurable
+	// TODO: make it configurable
 	session.Options = &sessions.Options{
 		// Domain "localhost"
 		// MaxAge=0 means no 'Max-Age' attribute specified.
@@ -68,10 +91,10 @@ func (c *Cerberus) SetSession(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 
 	// if no valid token in DB
-	if data, err := SessionDatabase.getToken(username); err != nil {
+	if data, err := sessionDatabase.getToken(username); err != nil {
 		log.Println("Created new session")
 		token = securecookie.GenerateRandomKey(64)
-		if err := SessionDatabase.insertToken(token, username); err != nil {
+		if err := sessionDatabase.insertToken(token, username); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -82,7 +105,7 @@ func (c *Cerberus) SetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAdmin := false
-	isAdmin, _ = SessionDatabase.checkAdmin(username)
+	isAdmin, _ = sessionDatabase.checkAdmin(username)
 
 	// Set some session values.
 	session.Values["username"] = username
@@ -93,9 +116,9 @@ func (c *Cerberus) SetSession(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-// Unsets the session cookie and deletes the session entry from the "sessions" collection
+// UnsetSession cookie and deletes the session entry from the "sessions" collection
 func (c *Cerberus) UnsetSession(w http.ResponseWriter, r *http.Request) {
-	session, err := store.Get(r, c.StoreName)
+	session, err := store.Get(r, c.storeName)
 	if err != nil {
 		http.Error(w, MessingArroundError.Error(), http.StatusInternalServerError)
 		return
@@ -107,7 +130,7 @@ func (c *Cerberus) UnsetSession(w http.ResponseWriter, r *http.Request) {
 	username, _ = session.Values["username"].(string)
 	token, _ = session.Values["token"].([]byte)
 
-	if err := SessionDatabase.deleteToken(token, username); err != nil {
+	if err := sessionDatabase.deleteToken(token, username); err != nil {
 		http.Error(w, MessingArroundError.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -119,9 +142,9 @@ func (c *Cerberus) UnsetSession(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-// Extracts username from the cookie and returns it
+// GetUsername from the cookie and returns it
 func (c *Cerberus) GetUsername(r *http.Request) (string, error) {
-	session, err := store.Get(r, c.StoreName)
+	session, err := store.Get(r, c.storeName)
 	if err != nil {
 		return "", MessingArroundError
 	}
@@ -138,7 +161,7 @@ func (c *Cerberus) GetUsername(r *http.Request) (string, error) {
 
 // Extracts isAdmin flag from the cookie and returns it
 func (c *Cerberus) UserIsAdmin(r *http.Request) (bool, error) {
-	session, err := store.Get(r, c.StoreName)
+	session, err := store.Get(r, c.storeName)
 	if err != nil {
 		return false, MessingArroundError
 	}
@@ -155,7 +178,7 @@ func (c *Cerberus) UserIsAdmin(r *http.Request) (bool, error) {
 
 // Check if user exists on the DB
 func (c *Cerberus) CheckUser(username, userpass string) error {
-	result, err := SessionDatabase.getUser(username)
+	result, err := sessionDatabase.getUser(username)
 	if err != nil {
 		if err == mgo.ErrNotFound {
 			return UserNotExistsError
@@ -174,7 +197,7 @@ func (c *Cerberus) CheckUser(username, userpass string) error {
 
 // Check if the token is in the DB stored as valid token
 func (c *Cerberus) CheckAuthToken(r *http.Request) error {
-	session, err := store.Get(r, c.StoreName)
+	session, err := store.Get(r, c.storeName)
 	if err != nil {
 		return SessionError
 	}
@@ -188,7 +211,7 @@ func (c *Cerberus) CheckAuthToken(r *http.Request) error {
 		token = data
 	}
 
-	if result, err := SessionDatabase.getToken(username); err != nil {
+	if result, err := sessionDatabase.getToken(username); err != nil {
 		log.Println(err)
 		return SessionError
 	} else {
@@ -199,7 +222,11 @@ func (c *Cerberus) CheckAuthToken(r *http.Request) error {
 	return LoginError
 }
 
-// Add new user with hashed password
+// =================
+// = User handlers =
+// =================
+
+// AddNewUser with hashed password
 func (c *Cerberus) AddNewUser(username, userpass, email string, isAdmin bool) error {
 	// TODO: check for existing username
 
@@ -209,17 +236,34 @@ func (c *Cerberus) AddNewUser(username, userpass, email string, isAdmin bool) er
 		return err
 	}
 
-	if _, err := SessionDatabase.getUser(username); err == nil {
+	if _, err := sessionDatabase.getUser(username); err == nil {
 		return UserAlreadyExistsError
 	}
 
 	// log.Printf("&SessionDataStore: %p", &Database)
-	if err := SessionDatabase.insertUser(username, string(hash), email, isAdmin); err != nil {
+	if err := sessionDatabase.insertUser(username, string(hash), email, isAdmin); err != nil {
 		return err
 	}
 
 	return nil
 }
+
+// // GetUsername returns user id from the user DB
+// func (c *Cerberus) GetUsername(r *http.Request) (string, error) {
+// 	session, err := store.Get(r, c.storeName)
+// 	if err != nil {
+// 		return "", MessingArroundError
+// 	}
+
+// 	username := session.Values["username"]
+
+// 	// Type assertion
+// 	if str, ok := username.(string); ok {
+// 		id, err := sessionDatabase.getUserId(username) {
+
+// 		}
+// 	}
+// }
 
 // ====================
 // = Database methods =
@@ -227,7 +271,7 @@ func (c *Cerberus) AddNewUser(username, userpass, email string, isAdmin bool) er
 
 // User collection entry struct.
 type userDB struct {
-	Username string `bson:"username"`
+	Username string `bson:"_id"`
 	Userpass string `bson:"userpass"`
 	Email    string `bson:"email"`
 	IsActive bool   `bson:"isActive"`
@@ -236,34 +280,20 @@ type userDB struct {
 
 // Session collection entry struct.
 type sessionsDB struct {
-	Username string
-	Token    []byte
+	Username string `bson:"_id"`
+	Token    []byte `bson:"token"`
 }
 
 // Database connector struct.
-type SessionDataStore struct {
-	DBAddr string
-	DBPort string
-	DBName string
+type sessionDataStore struct {
+	dbAddr string
+	dbPort string
+	dbName string
 	db     *mgo.Database
 }
 
-// Connect to de DB and stores the db instance in –SessionDataStore–
-func (d *SessionDataStore) Connect() {
-	session, err := mgo.Dial(d.DBAddr + ":" + d.DBPort)
-	if err != nil {
-		log.Fatalf("Cerberus: %s", err.Error())
-	}
-
-	session.SetMode(mgo.Monotonic, true)
-
-	db := session.DB(d.DBName)
-	d.db = db
-	log.Println("Cerberus: Session database conected")
-}
-
 // Insert userdata into "users" collection.
-func (d *SessionDataStore) insertUser(username, userpass, email string, isAdmin bool) error {
+func (d *sessionDataStore) insertUser(username, userpass, email string, isAdmin bool) error {
 	col := d.db.C("users")
 	data := &userDB{
 		Username: username,
@@ -272,6 +302,7 @@ func (d *SessionDataStore) insertUser(username, userpass, email string, isAdmin 
 		IsActive: true,
 		IsAdmin:  isAdmin,
 	}
+
 	if err := col.Insert(data); err != nil {
 		log.Println(err)
 		return err
@@ -281,32 +312,38 @@ func (d *SessionDataStore) insertUser(username, userpass, email string, isAdmin 
 }
 
 // Insert token into "sessions" collection.
-func (d *SessionDataStore) insertToken(token []byte, username string) error {
+func (d *sessionDataStore) insertToken(token []byte, username string) error {
 	col := d.db.C("sessions")
-	if _, err := col.Upsert(bson.M{"username": username}, &sessionsDB{username, token}); err != nil {
+	query := bson.M{"_id": username}
+	data := &sessionsDB{username, token}
+
+	if _, err := col.Upsert(query, data); err != nil {
 		log.Println(err)
 		return err
 	}
+
 	return nil
 }
 
 // Deletes token from "sessions" collection.
-func (d *SessionDataStore) deleteToken(token []byte, username string) error {
+func (d *sessionDataStore) deleteToken(token []byte, username string) error {
 	col := d.db.C("sessions")
-	query := bson.M{"username": username, "token": token}
+	query := bson.M{"_id": username, "token": token}
+
 	if _, err := col.RemoveAll(query); err != nil {
 		log.Println(err)
 		return err
 	}
+
 	return nil
 }
 
 // Search an entry in "users" where "username" is passed username to users
 // and returns collection and return a sessionDB struct or error.
-func (d *SessionDataStore) getUser(username string) (userDB, error) {
+func (d *sessionDataStore) getUser(username string) (userDB, error) {
 	result := userDB{}
 	col := d.db.C("users")
-	query := bson.M{"username": username}
+	query := bson.M{"_id": username}
 
 	if err := col.Find(query).One(&result); err != nil {
 		log.Printf("DB user: %s", err)
@@ -318,10 +355,10 @@ func (d *SessionDataStore) getUser(username string) (userDB, error) {
 
 // Search an entry in "sessions" where "username" is passed username to sessions
 // and returns collection and returns a sessionDB struct or error.
-func (d *SessionDataStore) getToken(username string) (sessionsDB, error) {
+func (d *sessionDataStore) getToken(username string) (sessionsDB, error) {
 	result := sessionsDB{}
 	col := d.db.C("sessions")
-	query := bson.M{"username": username}
+	query := bson.M{"_id": username}
 
 	if err := col.Find(query).One(&result); err != nil {
 		log.Printf("Cerberus: %s", err)
@@ -332,10 +369,10 @@ func (d *SessionDataStore) getToken(username string) (sessionsDB, error) {
 }
 
 // Check if user has admin flag to true
-func (d *SessionDataStore) checkAdmin(username string) (bool, error) {
+func (d *sessionDataStore) checkAdmin(username string) (bool, error) {
 	result := userDB{}
 	col := d.db.C("users")
-	query := bson.M{"username": username}
+	query := bson.M{"_id": username}
 
 	if err := col.Find(query).One(&result); err != nil {
 		log.Printf("Cerberus: %s", err)
@@ -347,13 +384,13 @@ func (d *SessionDataStore) checkAdmin(username string) (bool, error) {
 	return isAdmin, nil
 }
 
-// Returns all the users
-func (d *SessionDataStore) getAllUsers() ([]string, error) {
+// getAllUsers returns a string array populated with all the users in the db
+func (d *sessionDataStore) getAllUsers() ([]string, error) {
 	var result []string
 	query := bson.M{}
 	col := d.db.C("users")
 
-	if err := col.Find(query).Distinct("username", &result); err != nil {
+	if err := col.Find(query).Distinct("_id", &result); err != nil {
 		log.Printf("DB - error: %s", err)
 		return result, err
 	}
