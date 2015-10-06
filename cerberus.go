@@ -8,9 +8,9 @@
 package cerberus
 
 import (
+	"crypto/rand"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 
 	"github.com/gorilla/sessions"
@@ -89,7 +89,7 @@ func (c *Cerberus) SetSession(w http.ResponseWriter, r *http.Request) {
 	// if no valid token in DB
 	if data, err := sessionDatabase.getToken(username); err != nil {
 		log.Println("Created new session")
-		token = securecookie.GenerateRandomKey(64)
+		token = generateRandomKey(64)
 		if err := sessionDatabase.insertToken(token, username); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
