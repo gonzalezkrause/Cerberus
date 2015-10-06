@@ -8,10 +8,11 @@
 package cerberus
 
 import (
+	"io"
 	"log"
+	"math/rand"
 	"net/http"
 
-	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/mgo.v2"
@@ -38,8 +39,6 @@ func NewCerberus(storeName, dbAddr, dbPort, dbName string) *Cerberus {
 	db := session.DB(dbName)
 	sessionDatabase.db = db
 
-	log.Println("Cerberus: Session database conected")
-
 	return &Cerberus{
 		storeName: storeName,
 	}
@@ -50,7 +49,7 @@ func NewCerberus(storeName, dbAddr, dbPort, dbName string) *Cerberus {
 // ====================
 
 // Generate a new tampersafe cookie store
-var store = sessions.NewCookieStore(securecookie.GenerateRandomKey(64))
+var store = sessions.NewCookieStore(generateRandomKey(64))
 
 // FIXME: Dev bypass
 // var store = sessions.NewCookieStore([]byte{
@@ -173,25 +172,6 @@ func (c *Cerberus) UserIsAdmin(r *http.Request) (bool, error) {
 	}
 }
 
-// Check if user exists on the DB
-func (c *Cerberus) CheckUser(username, userpass string) error {
-	result, err := sessionDatabase.getUser(username)
-	if err != nil {
-		if err == mgo.ErrNotFound {
-			return UserNotExistsError
-
-		} else {
-			return err
-		}
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(result.Userpass), []byte(userpass)); err != nil {
-		return LoginError
-	}
-
-	return nil
-}
-
 // Check if the token is in the DB stored as valid token
 func (c *Cerberus) CheckAuthToken(r *http.Request) error {
 	session, err := store.Get(r, c.storeName)
@@ -245,6 +225,25 @@ func (c *Cerberus) AddNewUser(username, userpass, email string, isAdmin bool) er
 	return nil
 }
 
+// Check if user exists on the DB
+func (c *Cerberus) CheckUser(username, userpass string) error {
+	result, err := sessionDatabase.getUser(username)
+	if err != nil {
+		if err == mgo.ErrNotFound {
+			return UserNotExistsError
+
+		} else {
+			return err
+		}
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(result.Userpass), []byte(userpass)); err != nil {
+		return LoginError
+	}
+
+	return nil
+}
+
 // // GetUsername returns user id from the user DB
 // func (c *Cerberus) GetUsername(r *http.Request) (string, error) {
 // 	session, err := store.Get(r, c.storeName)
@@ -256,8 +255,23 @@ func (c *Cerberus) AddNewUser(username, userpass, email string, isAdmin bool) er
 
 // 	// Type assertion
 // 	if str, ok := username.(string); ok {
-// 		id, err := sessionDatabase.getUserId(username) {
-
+// 		if user, err := sessionDatabase.getUserId(username); err != nil {
+// 			return "", err
+// 		} else {
+// 			return "", nil
 // 		}
+// 		sessionDatabase.get
 // 	}
 // }
+
+// ===========
+// = Helpers =
+// ===========
+
+func generateRandomKey(length int) []byte {
+	k := make([]byte, length)
+	if _, err := io.ReadFull(rand.Reader, k); err != nil {
+		return nil
+	}
+	return k
+}
