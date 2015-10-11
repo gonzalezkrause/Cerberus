@@ -18,11 +18,29 @@ import (
 	"gopkg.in/mgo.v2"
 )
 
+var store *sessions.CookieStore
+
 type Cerberus struct {
 	storeName string
 }
 
-func NewCerberus(storeName, dbAddr, dbPort, dbName string) *Cerberus {
+func New(storeName, dbAddr, dbPort, dbName string, dev bool) *Cerberus {
+	// Generate a new tampersafe cookie store or use dev insecure mode
+	if dev {
+		store = sessions.NewCookieStore([]byte{
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+			42, 42, 42, 42, 42, 42, 42, 42,
+		})
+	} else {
+		store = sessions.NewCookieStore(generateRandomKey(64))
+	}
+
 	sessionDatabase = sessionDataStore{
 		dbAddr: dbAddr,
 		dbPort: dbPort,
@@ -47,21 +65,6 @@ func NewCerberus(storeName, dbAddr, dbPort, dbName string) *Cerberus {
 // ====================
 // = Session handlers =
 // ====================
-
-// Generate a new tampersafe cookie store
-var store = sessions.NewCookieStore(generateRandomKey(64))
-
-// FIXME: Dev bypass
-// var store = sessions.NewCookieStore([]byte{
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// 	42, 42, 42, 42, 42, 42, 42, 42,
-// })
 
 // SetSession cookie and stores the session entry into the "sessions" collection
 func (c *Cerberus) SetSession(w http.ResponseWriter, r *http.Request) {
