@@ -24,9 +24,9 @@ type Cerberus struct {
 	storeName string
 }
 
-func New(storeName, dbAddr, dbPort, dbName string, dev bool) *Cerberus {
+func New(storeName, dbAddr, dbPort, dbName string, devMode bool) *Cerberus {
 	// Generate a new tampersafe cookie store or use dev insecure mode
-	if dev {
+	if devMode {
 		store = sessions.NewCookieStore([]byte{
 			42, 42, 42, 42, 42, 42, 42, 42,
 			42, 42, 42, 42, 42, 42, 42, 42,
